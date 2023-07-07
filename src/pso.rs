@@ -114,7 +114,7 @@ impl<'a> Deref for CachedPSO<'a> {
     }
 }
 
-pub type PipelineState = ComPtr<d3d12::ID3D12PipelineState>;
+pub type PipelineState = d3d12::ID3D12PipelineState;
 
 #[repr(u32)]
 pub enum Subobject {

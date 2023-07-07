@@ -1,14 +1,15 @@
 //! Command Allocator
 
-use crate::com::ComPtr;
-use winapi::um::d3d12;
+use windows::Win32::Graphics::Direct3D12::ID3D12CommandAllocator;
 
-pub type CommandAllocator = ComPtr<d3d12::ID3D12CommandAllocator>;
+pub struct CommandAllocator {
+    pub(crate) inner: ID3D12CommandAllocator,
+}
 
 impl CommandAllocator {
     pub fn reset(&self) {
         unsafe {
-            self.Reset();
+            self.inner.Reset();
         }
     }
 }

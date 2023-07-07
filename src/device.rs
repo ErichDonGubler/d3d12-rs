@@ -1,63 +1,53 @@
 //! Device
 
+use windows::Win32::Graphics::Direct3D12::{
+    ID3D12Device, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_SIGNATURE_DESC, D3D12_COMPARISON_FUNC,
+    D3D12_COMPUTE_PIPELINE_STATE_DESC, D3D12_DESCRIPTOR_HEAP_DESC, D3D12_FENCE_FLAG_NONE,
+    D3D12_FILTER, D3D12_HEAP_DESC, D3D12_QUERY_HEAP_DESC, D3D12_SAMPLER_DESC,
+};
+
 use crate::{
-    com::ComPtr,
     command_list::{CmdListType, CommandSignature, IndirectArgument},
     descriptor::{CpuDescriptor, DescriptorHeapFlags, DescriptorHeapType, RenderTargetViewDesc},
     heap::{Heap, HeapFlags, HeapProperties},
-    pso, query, queue, Blob, CachedPSO, CommandAllocator, CommandQueue, D3DResult, DescriptorHeap,
-    Fence, GraphicsCommandList, NodeMask, PipelineState, QueryHeap, Resource, RootSignature,
-    Shader, TextureAddressMode,
+    pso, query, queue, CachedPSO, CommandAllocator, CommandQueue, D3DResult, DescriptorHeap, Fence,
+    GraphicsCommandList, NodeMask, PipelineState, QueryHeap, Resource, RootSignature, Shader,
+    TextureAddressMode,
 };
 use std::ops::Range;
-use winapi::{um::d3d12, Interface};
 
-pub type Device = ComPtr<d3d12::ID3D12Device>;
+pub struct Device {
+    inner: ID3D12Device,
+}
 
 #[cfg(feature = "libloading")]
 impl crate::D3D12Lib {
-pub fn create_device<I: Interface>(
+    // TODO: redundant with `Device::create`?
+    pub fn create_device<I: Interface>(
         &self,
         adapter: &ComPtr<I>,
         feature_level: crate::FeatureLevel,
     ) -> Result<D3DResult<Device>, libloading::Error> {
-        type Fun = extern "system" fn(
-            *mut winapi::um::unknwnbase::IUnknown,
-            winapi::um::d3dcommon::D3D_FEATURE_LEVEL,
-            winapi::shared::guiddef::REFGUID,
-            *mut *mut winapi::ctypes::c_void,
-        ) -> crate::HRESULT;
+        use windows::Win32::Graphics::Direct3D12::D3D12CreateDevice;
 
-        let mut device = Device::null();
-        let hr = unsafe {
-            let func: libloading::Symbol<Fun> = self.lib.get(b"D3D12CreateDevice")?;
-            func(
-                adapter.as_unknown() as *const _ as *mut _,
-                feature_level as _,
-                &d3d12::ID3D12Device::uuidof(),
-                device.mut_void(),
-            )
-        };
+        let mut device = None;
+        let hr = unsafe { D3D12CreateDevice(adapter, feature_level, &mut device) };
 
         Ok((device, hr))
     }
 }
 
 impl Device {
+    // TODO: redundant with `D3D12Lib::create_device`?
     #[cfg(feature = "implicit-link")]
     pub fn create<I: Interface>(
         adapter: ComPtr<I>,
         feature_level: crate::FeatureLevel,
     ) -> D3DResult<Self> {
-        let mut device = Device::null();
-        let hr = unsafe {
-            d3d12::D3D12CreateDevice(
-                adapter.as_unknown() as *const _ as *mut _,
-                feature_level as _,
-                &d3d12::ID3D12Device::uuidof(),
-                device.mut_void(),
-            )
-        };
+        use windows::Win32::Graphics::Direct3D12::D3D12CreateDevice;
+
+        let mut device = None;
+        let hr = unsafe { D3D12CreateDevice(adapter, feature_level, &mut device) };
 
         (device, hr)
     }
@@ -69,29 +59,23 @@ impl Device {
         alignment: u64,
         flags: HeapFlags,
     ) -> D3DResult<Heap> {
-        let mut heap = Heap::null();
+        let mut heap = None;
 
-        let desc = d3d12::D3D12_HEAP_DESC {
+        let desc = D3D12_HEAP_DESC {
             SizeInBytes: size_in_bytes,
             Properties: properties.0,
             Alignment: alignment,
-            Flags: flags.bits(),
+            Flags: flags,
         };
 
-        let hr = unsafe { self.CreateHeap(&desc, &d3d12::ID3D12Heap::uuidof(), heap.mut_void()) };
+        let hr = unsafe { self.inner.CreateHeap(&desc, &mut heap) };
 
         (heap, hr)
     }
 
     pub fn create_command_allocator(&self, list_type: CmdListType) -> D3DResult<CommandAllocator> {
         let mut allocator = CommandAllocator::null();
-        let hr = unsafe {
-            self.CreateCommandAllocator(
-                list_type as _,
-                &d3d12::ID3D12CommandAllocator::uuidof(),
-                allocator.mut_void(),
-            )
-        };
+        let hr = unsafe { self.inner.CreateCommandAllocator(list_type) };
 
         (allocator, hr)
     }
@@ -103,23 +87,16 @@ impl Device {
         flags: queue::CommandQueueFlags,
         node_mask: NodeMask,
     ) -> D3DResult<CommandQueue> {
-        let desc = d3d12::D3D12_COMMAND_QUEUE_DESC {
+        let desc = D3D12_COMMAND_QUEUE_DESC {
             Type: list_type as _,
             Priority: priority as _,
             Flags: flags.bits(),
             NodeMask: node_mask,
         };
 
-        let mut queue = CommandQueue::null();
-        let hr = unsafe {
-            self.CreateCommandQueue(
-                &desc,
-                &d3d12::ID3D12CommandQueue::uuidof(),
-                queue.mut_void(),
-            )
-        };
+        let queue_res = unsafe { self.inner.CreateCommandQueue(&desc) };
 
-        (queue, hr)
+        queue_res
     }
 
     pub fn create_descriptor_heap(
@@ -129,23 +106,16 @@ impl Device {
         flags: DescriptorHeapFlags,
         node_mask: NodeMask,
     ) -> D3DResult<DescriptorHeap> {
-        let desc = d3d12::D3D12_DESCRIPTOR_HEAP_DESC {
+        let desc = D3D12_DESCRIPTOR_HEAP_DESC {
             Type: heap_type as _,
             NumDescriptors: num_descriptors,
             Flags: flags.bits(),
             NodeMask: node_mask,
         };
 
-        let mut heap = DescriptorHeap::null();
-        let hr = unsafe {
-            self.CreateDescriptorHeap(
-                &desc,
-                &d3d12::ID3D12DescriptorHeap::uuidof(),
-                heap.mut_void(),
-            )
-        };
+        let heap_res = unsafe { self.inner.CreateDescriptorHeap(&desc) };
 
-        (heap, hr)
+        heap_res
     }
 
     pub fn get_descriptor_increment_size(&self, heap_type: DescriptorHeapType) -> u32 {
@@ -160,18 +130,12 @@ impl Device {
         node_mask: NodeMask,
     ) -> D3DResult<GraphicsCommandList> {
         let mut command_list = GraphicsCommandList::null();
-        let hr = unsafe {
-            self.CreateCommandList(
-                node_mask,
-                list_type as _,
-                allocator.as_mut_ptr(),
-                initial.as_mut_ptr(),
-                &d3d12::ID3D12GraphicsCommandList::uuidof(),
-                command_list.mut_void(),
-            )
+        let cmd_list_res = unsafe {
+            self.inner
+                .CreateCommandList(node_mask, list_type as _, &allocator, &initial)
         };
 
-        (command_list, hr)
+        cmd_list_res
     }
 
     pub fn create_query_heap(
@@ -180,20 +144,14 @@ impl Device {
         count: u32,
         node_mask: NodeMask,
     ) -> D3DResult<QueryHeap> {
-        let desc = d3d12::D3D12_QUERY_HEAP_DESC {
+        let desc = D3D12_QUERY_HEAP_DESC {
             Type: heap_ty as _,
             Count: count,
             NodeMask: node_mask,
         };
 
-        let mut query_heap = QueryHeap::null();
-        let hr = unsafe {
-            self.CreateQueryHeap(
-                &desc,
-                &d3d12::ID3D12QueryHeap::uuidof(),
-                query_heap.mut_void(),
-            )
-        };
+        let mut query_heap = None;
+        let hr = unsafe { self.inner.CreateQueryHeap(&desc, &mut query_heap) };
 
         (query_heap, hr)
     }
@@ -222,7 +180,7 @@ impl Device {
         flags: pso::PipelineStateFlags,
     ) -> D3DResult<PipelineState> {
         let mut pipeline = PipelineState::null();
-        let desc = d3d12::D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        let desc = D3D12_COMPUTE_PIPELINE_STATE_DESC {
             pRootSignature: root_signature.as_mut_ptr(),
             CS: *cs,
             NodeMask: node_mask,
@@ -230,29 +188,23 @@ impl Device {
             Flags: flags.bits(),
         };
 
-        let hr = unsafe {
-            self.CreateComputePipelineState(
-                &desc,
-                &d3d12::ID3D12PipelineState::uuidof(),
-                pipeline.mut_void(),
-            )
-        };
+        let pipeline_res = unsafe { self.inner.CreateComputePipelineState(&desc) };
 
-        (pipeline, hr)
+        pipeline_res
     }
 
     pub fn create_sampler(
         &self,
         sampler: CpuDescriptor,
-        filter: d3d12::D3D12_FILTER,
+        filter: D3D12_FILTER,
         address_mode: TextureAddressMode,
         mip_lod_bias: f32,
         max_anisotropy: u32,
-        comparison_op: d3d12::D3D12_COMPARISON_FUNC,
+        comparison_op: D3D12_COMPARISON_FUNC,
         border_color: [f32; 4],
         lod: Range<f32>,
     ) {
-        let desc = d3d12::D3D12_SAMPLER_DESC {
+        let desc = D3D12_SAMPLER_DESC {
             Filter: filter,
             AddressU: address_mode[0],
             AddressV: address_mode[1],
@@ -272,19 +224,11 @@ impl Device {
 
     pub fn create_root_signature(
         &self,
-        blob: Blob,
+        blob: &[u8],
         node_mask: NodeMask,
     ) -> D3DResult<RootSignature> {
         let mut signature = RootSignature::null();
-        let hr = unsafe {
-            self.CreateRootSignature(
-                node_mask,
-                blob.GetBufferPointer(),
-                blob.GetBufferSize(),
-                &d3d12::ID3D12RootSignature::uuidof(),
-                signature.mut_void(),
-            )
-        };
+        let hr = unsafe { self.inner.CreateRootSignature(node_mask, blob) };
 
         (signature, hr)
     }
@@ -296,8 +240,8 @@ impl Device {
         stride: u32,
         node_mask: NodeMask,
     ) -> D3DResult<CommandSignature> {
-        let mut signature = CommandSignature::null();
-        let desc = d3d12::D3D12_COMMAND_SIGNATURE_DESC {
+        let mut signature = None;
+        let desc = D3D12_COMMAND_SIGNATURE_DESC {
             ByteStride: stride,
             NumArgumentDescs: arguments.len() as _,
             pArgumentDescs: arguments.as_ptr() as *const _,
@@ -305,12 +249,8 @@ impl Device {
         };
 
         let hr = unsafe {
-            self.CreateCommandSignature(
-                &desc,
-                root_signature.as_mut_ptr(),
-                &d3d12::ID3D12CommandSignature::uuidof(),
-                signature.mut_void(),
-            )
+            self.inner
+                .CreateCommandSignature(&desc, &root_signature, &mut signature)
         };
 
         (signature, hr)
@@ -329,16 +269,8 @@ impl Device {
 
     // TODO: interface not complete
     pub fn create_fence(&self, initial: u64) -> D3DResult<Fence> {
-        let mut fence = Fence::null();
-        let hr = unsafe {
-            self.CreateFence(
-                initial,
-                d3d12::D3D12_FENCE_FLAG_NONE,
-                &d3d12::ID3D12Fence::uuidof(),
-                fence.mut_void(),
-            )
-        };
+        let fence_res = unsafe { self.inner.CreateFence(initial, D3D12_FENCE_FLAG_NONE) };
 
-        (fence, hr)
+        fence_res
     }
 }
