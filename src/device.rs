@@ -14,7 +14,7 @@ use crate::{
     GraphicsCommandList, NodeMask, PipelineState, QueryHeap, Resource, RootSignature, Shader,
     TextureAddressMode,
 };
-use std::ops::Range;
+use std::{ops::Range, ptr};
 
 pub struct Device {
     inner: ID3D12Device,
@@ -68,16 +68,12 @@ impl Device {
             Flags: flags,
         };
 
-        let hr = unsafe { self.inner.CreateHeap(&desc, &mut heap) };
-
-        (heap, hr)
+        unsafe { self.inner.CreateHeap(&desc, &mut heap) }.map(|()| heap.unwrap())
     }
 
     pub fn create_command_allocator(&self, list_type: CmdListType) -> D3DResult<CommandAllocator> {
-        let mut allocator = CommandAllocator::null();
-        let hr = unsafe { self.inner.CreateCommandAllocator(list_type) };
-
-        (allocator, hr)
+        unsafe { self.inner.CreateCommandAllocator(list_type.into()) }
+            .map(|inner| CommandAllocator { inner })
     }
 
     pub fn create_command_queue(

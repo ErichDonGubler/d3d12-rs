@@ -1,41 +1,69 @@
 //! Pipeline state
 
-use crate::{com::ComPtr, Blob, D3DResult, Error};
-use std::{ffi::{self, c_void}, ops::Deref, ptr, marker::PhantomData};
-use winapi::um::{d3d12, d3dcompiler};
+use windows::{
+    core::PCSTR,
+    Win32::Graphics::{
+        Direct3D::Fxc::{
+            D3DCompile, D3DCOMPILE_DEBUG, D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR,
+            D3DCOMPILE_PACK_MATRIX_ROW_MAJOR, D3DCOMPILE_PARTIAL_PRECISION,
+            D3DCOMPILE_SKIP_OPTIMIZATION, D3DCOMPILE_SKIP_VALIDATION,
+        },
+        Direct3D12::{
+            ID3D12PipelineState, D3D12_CACHED_PIPELINE_STATE, D3D12_PIPELINE_STATE_FLAGS,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_FLAGS,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_NODE_MASK,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT,
+            D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS, D3D12_SHADER_BYTECODE,
+        },
+    },
+};
 
-bitflags! {
-    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    pub struct PipelineStateFlags: u32 {
-        const TOOL_DEBUG = d3d12::D3D12_PIPELINE_STATE_FLAG_TOOL_DEBUG;
-    }
-}
+use crate::{Blob, D3DResult, Error};
+use std::{ffi, ops::Deref, ptr};
 
+// NOTE: regressed `PartialOrd`, but y wud u do dis neway
+pub type PipelineStateFlags = D3D12_PIPELINE_STATE_FLAGS;
+
+// // NOTE: regressed `PartialOrd`, but y wud u do dis neway
 bitflags! {
-    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct ShaderCompileFlags: u32 {
-        const DEBUG = d3dcompiler::D3DCOMPILE_DEBUG;
-        const SKIP_VALIDATION = d3dcompiler::D3DCOMPILE_SKIP_VALIDATION;
-        const SKIP_OPTIMIZATION = d3dcompiler::D3DCOMPILE_SKIP_OPTIMIZATION;
-        const PACK_MATRIX_ROW_MAJOR = d3dcompiler::D3DCOMPILE_PACK_MATRIX_ROW_MAJOR;
-        const PACK_MATRIX_COLUMN_MAJOR = d3dcompiler::D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR;
-        const PARTIAL_PRECISION = d3dcompiler::D3DCOMPILE_PARTIAL_PRECISION;
+        const DEBUG = D3DCOMPILE_DEBUG;
+        const SKIP_VALIDATION = D3DCOMPILE_SKIP_VALIDATION;
+        const SKIP_OPTIMIZATION = D3DCOMPILE_SKIP_OPTIMIZATION;
+        const PACK_MATRIX_ROW_MAJOR = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR;
+        const PACK_MATRIX_COLUMN_MAJOR = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR;
+        const PARTIAL_PRECISION = D3DCOMPILE_PARTIAL_PRECISION;
         // TODO: add missing flags
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct Shader<'a>(d3d12::D3D12_SHADER_BYTECODE, PhantomData<&'a c_void>);
-impl<'a> Shader<'a> {
+pub struct Shader(D3D12_SHADER_BYTECODE);
+impl Shader {
     pub fn null() -> Self {
-        Shader(d3d12::D3D12_SHADER_BYTECODE {
+        Shader(D3D12_SHADER_BYTECODE {
             BytecodeLength: 0,
             pShaderBytecode: ptr::null(),
         }, PhantomData)
     }
 
     pub fn from_raw(data: &'a [u8]) -> Self {
-        Shader(d3d12::D3D12_SHADER_BYTECODE {
+        Shader(D3D12_SHADER_BYTECODE {
             BytecodeLength: data.len() as _,
             pShaderBytecode: data.as_ptr() as _,
         }, PhantomData)
@@ -43,7 +71,7 @@ impl<'a> Shader<'a> {
 
     // `blob` may not be null.
     pub fn from_blob(blob: &'a Blob) -> Self {
-        Shader(d3d12::D3D12_SHADER_BYTECODE {
+        Shader(D3D12_SHADER_BYTECODE {
             BytecodeLength: unsafe { blob.GetBufferSize() },
             pShaderBytecode: unsafe { blob.GetBufferPointer() },
         }, PhantomData)
@@ -58,41 +86,41 @@ impl<'a> Shader<'a> {
         entry: &ffi::CStr,
         flags: ShaderCompileFlags,
     ) -> D3DResult<(Blob, Error)> {
-        let mut shader = Blob::null();
-        let mut error = Error::null();
+        let mut shader = None;
+        let mut error = None;
 
-        let hr = unsafe {
-            d3dcompiler::D3DCompile(
+        unsafe {
+            D3DCompile(
+                // FIXME: warning, `usize` to `u32`!
                 code.as_ptr() as *const _,
                 code.len(),
-                ptr::null(), // defines
-                ptr::null(), // include
-                ptr::null_mut(),
-                entry.as_ptr() as *const _,
-                target.as_ptr() as *const _,
+                None,
+                None, // defines
+                None, // include
+                PCSTR::from_raw(entry.as_ptr().cast()),
+                PCSTR::from_raw(target.as_ptr().cast()),
                 flags.bits(),
                 0,
-                shader.mut_void() as *mut *mut _,
-                error.mut_void() as *mut *mut _,
+                &mut shader,
+                Some(&mut error),
             )
-        };
-
-        ((shader, error), hr)
+        }
+        .map(|()| (shader.unwrap(), error.unwrap()))
     }
 }
 
 impl<'a> Deref for Shader<'a> {
-    type Target = d3d12::D3D12_SHADER_BYTECODE;
+    type Target = D3D12_SHADER_BYTECODE;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct CachedPSO<'a>(d3d12::D3D12_CACHED_PIPELINE_STATE, PhantomData<&'a c_void>);
-impl<'a> CachedPSO<'a> {
+pub struct CachedPSO(D3D12_CACHED_PIPELINE_STATE);
+impl CachedPSO {
     pub fn null() -> Self {
-        CachedPSO(d3d12::D3D12_CACHED_PIPELINE_STATE {
+        CachedPSO(D3D12_CACHED_PIPELINE_STATE {
             CachedBlobSizeInBytes: 0,
             pCachedBlob: ptr::null(),
         }, PhantomData)
@@ -100,7 +128,7 @@ impl<'a> CachedPSO<'a> {
 
     // `blob` may not be null.
     pub fn from_blob(blob: &'a Blob) -> Self {
-        CachedPSO(d3d12::D3D12_CACHED_PIPELINE_STATE {
+        CachedPSO(D3D12_CACHED_PIPELINE_STATE {
             CachedBlobSizeInBytes: unsafe { blob.GetBufferSize() },
             pCachedBlob: unsafe { blob.GetBufferPointer() },
         }, PhantomData)
@@ -108,46 +136,76 @@ impl<'a> CachedPSO<'a> {
 }
 
 impl<'a> Deref for CachedPSO<'a> {
-    type Target = d3d12::D3D12_CACHED_PIPELINE_STATE;
+    type Target = D3D12_CACHED_PIPELINE_STATE;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub type PipelineState = d3d12::ID3D12PipelineState;
+pub type PipelineState = ID3D12PipelineState;
 
 #[repr(u32)]
 pub enum Subobject {
-    RootSignature = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE,
-    VS = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS,
-    PS = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS,
-    DS = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS,
-    HS = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS,
-    GS = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS,
-    CS = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS,
-    StreamOutput = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT,
-    Blend = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND,
-    SampleMask = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,
-    Rasterizer = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER,
-    DepthStencil = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL,
-    InputLayout = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT,
-    IBStripCut = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE,
-    PrimitiveTopology = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY,
-    RTFormats = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS,
-    DSFormat = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT,
-    SampleDesc = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC,
-    NodeMask = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_NODE_MASK,
-    CachedPSO = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO,
-    Flags = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_FLAGS,
-    DepthStencil1 = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1,
-    // ViewInstancing = d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING,
+    RootSignature,
+    VS,
+    PS,
+    DS,
+    HS,
+    GS,
+    CS,
+    StreamOutput,
+    Blend,
+    SampleMask,
+    Rasterizer,
+    DepthStencil,
+    InputLayout,
+    IBStripCut,
+    PrimitiveTopology,
+    RTFormats,
+    DSFormat,
+    SampleDesc,
+    NodeMask,
+    CachedPSO,
+    Flags,
+    DepthStencil1,
+    // ViewInstancing,
+}
+
+impl From<Subobject> for D3D12_PIPELINE_STATE_SUBOBJECT_TYPE {
+    fn from(value: Subobject) -> Self {
+        match value {
+            Subobject::RootSignature => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE,
+            Subobject::VS => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS,
+            Subobject::PS => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS,
+            Subobject::DS => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS,
+            Subobject::HS => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS,
+            Subobject::GS => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS,
+            Subobject::CS => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS,
+            Subobject::StreamOutput => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT,
+            Subobject::Blend => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND,
+            Subobject::SampleMask => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,
+            Subobject::Rasterizer => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER,
+            Subobject::DepthStencil => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL,
+            Subobject::InputLayout => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT,
+            Subobject::IBStripCut => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE,
+            Subobject::PrimitiveTopology => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY,
+            Subobject::RTFormats => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS,
+            Subobject::DSFormat => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT,
+            Subobject::SampleDesc => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC,
+            Subobject::NodeMask => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_NODE_MASK,
+            Subobject::CachedPSO => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO,
+            Subobject::Flags => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_FLAGS,
+            Subobject::DepthStencil1 => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1,
+            // Subobject::ViewInstancing => D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING,
+        }
+    }
 }
 
 /// Subobject of a pipeline stream description
 #[repr(C)]
 pub struct PipelineStateSubobject<T> {
     subobject_align: [usize; 0], // Subobjects must have the same alignment as pointers.
-    subobject_type: d3d12::D3D12_PIPELINE_STATE_SUBOBJECT_TYPE,
+    subobject_type: D3D12_PIPELINE_STATE_SUBOBJECT_TYPE,
     subobject: T,
 }
 
@@ -155,7 +213,7 @@ impl<T> PipelineStateSubobject<T> {
     pub fn new(subobject_type: Subobject, subobject: T) -> Self {
         PipelineStateSubobject {
             subobject_align: [],
-            subobject_type: subobject_type as _,
+            subobject_type: subobject_type.into(),
             subobject,
         }
     }

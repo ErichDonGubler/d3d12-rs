@@ -42,7 +42,7 @@ use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_9_2;
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_9_3;
 
 // TODO: overhaul allathese
-pub type D3DResult<T> = (T, HRESULT);
+pub type D3DResult<T> = windows::core::Result<T>;
 pub type GpuAddress = u64;
 pub type Format = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 pub type Rect = windows::Win32::Foundation::RECT;
