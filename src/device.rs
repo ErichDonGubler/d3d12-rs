@@ -1,9 +1,10 @@
 //! Device
 
 use windows::Win32::Graphics::Direct3D12::{
-    ID3D12Device, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_SIGNATURE_DESC, D3D12_COMPARISON_FUNC,
-    D3D12_COMPUTE_PIPELINE_STATE_DESC, D3D12_DESCRIPTOR_HEAP_DESC, D3D12_FENCE_FLAG_NONE,
-    D3D12_FILTER, D3D12_HEAP_DESC, D3D12_QUERY_HEAP_DESC, D3D12_SAMPLER_DESC,
+    ID3D12Device, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_QUEUE_PRIORITY,
+    D3D12_COMMAND_SIGNATURE_DESC, D3D12_COMPARISON_FUNC, D3D12_COMPUTE_PIPELINE_STATE_DESC,
+    D3D12_DESCRIPTOR_HEAP_DESC, D3D12_FENCE_FLAG_NONE, D3D12_FILTER, D3D12_HEAP_DESC,
+    D3D12_QUERY_HEAP_DESC, D3D12_SAMPLER_DESC,
 };
 
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
     GraphicsCommandList, NodeMask, PipelineState, QueryHeap, Resource, RootSignature, Shader,
     TextureAddressMode,
 };
-use std::{ops::Range, ptr};
+use std::{mem::ManuallyDrop, ops::Range};
 
 pub struct Device {
     inner: ID3D12Device,
@@ -84,15 +85,15 @@ impl Device {
         node_mask: NodeMask,
     ) -> D3DResult<CommandQueue> {
         let desc = D3D12_COMMAND_QUEUE_DESC {
-            Type: list_type as _,
-            Priority: priority as _,
-            Flags: flags.bits(),
+            Type: list_type.into(),
+            Priority: D3D12_COMMAND_QUEUE_PRIORITY::from(priority).0,
+            Flags: flags.into(),
             NodeMask: node_mask,
         };
 
-        let queue_res = unsafe { self.inner.CreateCommandQueue(&desc) };
+        let inner = unsafe { self.inner.CreateCommandQueue(&desc) }?;
 
-        queue_res
+        Ok(CommandQueue { inner })
     }
 
     pub fn create_descriptor_heap(
@@ -103,19 +104,22 @@ impl Device {
         node_mask: NodeMask,
     ) -> D3DResult<DescriptorHeap> {
         let desc = D3D12_DESCRIPTOR_HEAP_DESC {
-            Type: heap_type as _,
+            Type: heap_type.into(),
             NumDescriptors: num_descriptors,
-            Flags: flags.bits(),
+            Flags: flags.into(),
             NodeMask: node_mask,
         };
 
-        let heap_res = unsafe { self.inner.CreateDescriptorHeap(&desc) };
+        let inner = unsafe { self.inner.CreateDescriptorHeap(&desc) }?;
 
-        heap_res
+        Ok(DescriptorHeap { inner })
     }
 
     pub fn get_descriptor_increment_size(&self, heap_type: DescriptorHeapType) -> u32 {
-        unsafe { self.GetDescriptorHandleIncrementSize(heap_type as _) }
+        unsafe {
+            self.inner
+                .GetDescriptorHandleIncrementSize(heap_type.into())
+        }
     }
 
     pub fn create_graphics_command_list(
@@ -125,13 +129,16 @@ impl Device {
         initial: PipelineState,
         node_mask: NodeMask,
     ) -> D3DResult<GraphicsCommandList> {
-        let mut command_list = GraphicsCommandList::null();
-        let cmd_list_res = unsafe {
-            self.inner
-                .CreateCommandList(node_mask, list_type as _, &allocator, &initial)
-        };
+        let inner = unsafe {
+            self.inner.CreateCommandList(
+                node_mask,
+                list_type.into(),
+                &allocator.inner,
+                &initial.inner,
+            )
+        }?;
 
-        cmd_list_res
+        Ok(GraphicsCommandList { inner })
     }
 
     pub fn create_query_heap(
@@ -141,15 +148,17 @@ impl Device {
         node_mask: NodeMask,
     ) -> D3DResult<QueryHeap> {
         let desc = D3D12_QUERY_HEAP_DESC {
-            Type: heap_ty as _,
+            Type: heap_ty.into(),
             Count: count,
             NodeMask: node_mask,
         };
 
-        let mut query_heap = None;
-        let hr = unsafe { self.inner.CreateQueryHeap(&desc, &mut query_heap) };
+        let mut inner = None;
+        unsafe { self.inner.CreateQueryHeap(&desc, &mut inner) }?;
 
-        (query_heap, hr)
+        Ok(QueryHeap {
+            inner: inner.unwrap(),
+        })
     }
 
     pub fn create_graphics_pipeline_state(
@@ -175,18 +184,18 @@ impl Device {
         cached_pso: CachedPSO,
         flags: pso::PipelineStateFlags,
     ) -> D3DResult<PipelineState> {
-        let mut pipeline = PipelineState::null();
+        let root_signature = ManuallyDrop::new(Some(root_signature.inner));
         let desc = D3D12_COMPUTE_PIPELINE_STATE_DESC {
-            pRootSignature: root_signature.as_mut_ptr(),
+            pRootSignature: root_signature,
             CS: *cs,
             NodeMask: node_mask,
             CachedPSO: *cached_pso,
-            Flags: flags.bits(),
+            Flags: flags.into(),
         };
 
-        let pipeline_res = unsafe { self.inner.CreateComputePipelineState(&desc) };
+        let inner = unsafe { self.inner.CreateComputePipelineState(&desc) }?;
 
-        pipeline_res
+        Ok(PipelineState { inner })
     }
 
     pub fn create_sampler(
@@ -214,7 +223,7 @@ impl Device {
         };
 
         unsafe {
-            self.CreateSampler(&desc, sampler);
+            self.inner.CreateSampler(&desc, sampler);
         }
     }
 
@@ -223,10 +232,9 @@ impl Device {
         blob: &[u8],
         node_mask: NodeMask,
     ) -> D3DResult<RootSignature> {
-        let mut signature = RootSignature::null();
-        let hr = unsafe { self.inner.CreateRootSignature(node_mask, blob) };
+        let inner = unsafe { self.inner.CreateRootSignature(node_mask, blob) }?;
 
-        (signature, hr)
+        Ok(RootSignature { inner })
     }
 
     pub fn create_command_signature(
@@ -239,17 +247,20 @@ impl Device {
         let mut signature = None;
         let desc = D3D12_COMMAND_SIGNATURE_DESC {
             ByteStride: stride,
+            // NOTE: Warning, `usize` to `u32`!
             NumArgumentDescs: arguments.len() as _,
             pArgumentDescs: arguments.as_ptr() as *const _,
             NodeMask: node_mask,
         };
 
-        let hr = unsafe {
+        unsafe {
             self.inner
-                .CreateCommandSignature(&desc, &root_signature, &mut signature)
-        };
+                .CreateCommandSignature(&desc, &root_signature.inner, &mut signature)
+        }?;
 
-        (signature, hr)
+        Ok(CommandSignature {
+            inner: signature.unwrap(),
+        })
     }
 
     pub fn create_render_target_view(
@@ -259,14 +270,15 @@ impl Device {
         descriptor: CpuDescriptor,
     ) {
         unsafe {
-            self.CreateRenderTargetView(resource.as_mut_ptr(), &desc.0 as *const _, descriptor);
+            self.inner
+                .CreateRenderTargetView(Some(&resource.inner), Some(&desc.0), descriptor);
         }
     }
 
     // TODO: interface not complete
     pub fn create_fence(&self, initial: u64) -> D3DResult<Fence> {
-        let fence_res = unsafe { self.inner.CreateFence(initial, D3D12_FENCE_FLAG_NONE) };
+        let inner = unsafe { self.inner.CreateFence(initial, D3D12_FENCE_FLAG_NONE) }?;
 
-        fence_res
+        Ok(Fence { inner })
     }
 }

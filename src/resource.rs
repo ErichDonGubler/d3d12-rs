@@ -1,7 +1,7 @@
 //! GPU Resource
 
 use crate::{D3DResult, Rect};
-use std::{ops::Range, ptr};
+use std::{convert::TryInto, ops::Range, ptr};
 use windows::Win32::Graphics::Direct3D12::{ID3D12Resource, D3D12_DISCARD_REGION, D3D12_RANGE};
 
 pub type Subresource = u32;
@@ -13,7 +13,15 @@ pub struct DiscardRegion<'a> {
 
 impl DiscardRegion<'_> {
     pub(crate) fn to_ffi(&self) -> D3D12_DISCARD_REGION {
-        D3D12_DISCARD_REGION {}
+        let Self { rects, subregions } = self;
+
+        D3D12_DISCARD_REGION {
+            NumRects: rects.len().try_into().unwrap(),
+            pRects: rects.as_ptr(),
+            FirstSubresource: subregions.start,
+            // TODO: validate correctness
+            NumSubresources: subregions.end - subregions.start,
+        }
     }
 }
 
@@ -37,7 +45,7 @@ impl Resource {
             Begin: r.start,
             End: r.end,
         });
-        let hr = unsafe {
+        unsafe {
             self.inner.Map(
                 subresource,
                 read_range
@@ -46,9 +54,9 @@ impl Resource {
                     .map(|r| r.cast()),
                 Some(&mut ptr),
             )
-        };
+        }?;
 
-        (ptr as _, hr)
+        Ok(ptr.cast())
     }
 
     pub fn unmap(&self, subresource: Subresource, write_range: Option<Range<usize>>) {

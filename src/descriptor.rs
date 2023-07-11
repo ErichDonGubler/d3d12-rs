@@ -24,7 +24,7 @@ use windows::Win32::Graphics::{
 };
 
 use crate::{Blob, D3DResult, Error, TextureAddressMode};
-use std::{fmt, mem, ops::Range};
+use std::{fmt, ops::Range};
 
 pub type CpuDescriptor = D3D12_CPU_DESCRIPTOR_HANDLE;
 pub type GpuDescriptor = D3D12_GPU_DESCRIPTOR_HANDLE;
@@ -58,8 +58,9 @@ impl From<DescriptorHeapType> for D3D12_DESCRIPTOR_HEAP_TYPE {
 // NOTE: regressed `PartialOrd`, but y wud u do dis neway
 pub type DescriptorHeapFlags = D3D12_DESCRIPTOR_HEAP_FLAGS;
 
+#[derive(Clone)]
 pub struct DescriptorHeap {
-    inner: ID3D12DescriptorHeap,
+    pub(crate) inner: ID3D12DescriptorHeap,
 }
 
 impl DescriptorHeap {

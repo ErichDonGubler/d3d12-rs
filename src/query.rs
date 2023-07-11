@@ -18,14 +18,17 @@ pub enum QueryHeapType {
 impl From<QueryHeapType> for D3D12_QUERY_HEAP_TYPE {
     fn from(value: QueryHeapType) -> Self {
         match value {
-            Occlusion => D3D12_QUERY_HEAP_TYPE_OCCLUSION,
-            Timestamp => D3D12_QUERY_HEAP_TYPE_TIMESTAMP,
-            PipelineStatistics => D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS,
-            SOStatistics => D3D12_QUERY_HEAP_TYPE_SO_STATISTICS,
-            // VideoDecodeStatistcs => D3D12_QUERY_HEAP_TYPE_VIDEO_DECODE_STATISTICS,
-            // CopyQueueTimestamp => D3D12_QUERY_HEAP_TYPE_COPY_QUEUE_TIMESTAMP,
+            QueryHeapType::Occlusion => D3D12_QUERY_HEAP_TYPE_OCCLUSION,
+            QueryHeapType::Timestamp => D3D12_QUERY_HEAP_TYPE_TIMESTAMP,
+            QueryHeapType::PipelineStatistics => D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS,
+            QueryHeapType::SOStatistics => D3D12_QUERY_HEAP_TYPE_SO_STATISTICS,
+            // QueryHeapType::VideoDecodeStatistcs => D3D12_QUERY_HEAP_TYPE_VIDEO_DECODE_STATISTICS,
+            // QueryHeapType::CopyQueueTimestamp => D3D12_QUERY_HEAP_TYPE_COPY_QUEUE_TIMESTAMP,
         }
     }
 }
 
-pub type QueryHeap = ID3D12QueryHeap;
+pub struct QueryHeap {
+    #[allow(dead_code)] // TODO: remove this
+    pub(crate) inner: ID3D12QueryHeap,
+}

@@ -5,7 +5,6 @@ use windows::Win32::Graphics::Direct3D12::{
     D3D12_COMMAND_QUEUE_PRIORITY_NORMAL,
 };
 
-#[repr(u32)]
 pub enum Priority {
     Normal,
     High,
@@ -26,7 +25,7 @@ impl From<Priority> for D3D12_COMMAND_QUEUE_PRIORITY {
 pub type CommandQueueFlags = D3D12_COMMAND_QUEUE_FLAGS;
 
 pub struct CommandQueue {
-    inner: ID3D12CommandQueue,
+    pub(crate) inner: ID3D12CommandQueue,
 }
 
 impl CommandQueue {
@@ -34,12 +33,12 @@ impl CommandQueue {
         let command_lists = command_lists
             .iter()
             .cloned()
-            .map(Some)
+            .map(|outer| Some(outer.inner))
             .collect::<Box<[_]>>();
         unsafe { self.inner.ExecuteCommandLists(&*command_lists) }
     }
 
     pub fn signal(&self, fence: Fence, value: u64) -> D3DResult<()> {
-        unsafe { self.inner.Signal(fence, value) }
+        unsafe { self.inner.Signal(&fence.inner, value) }
     }
 }

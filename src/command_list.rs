@@ -165,16 +165,27 @@ impl ResourceBarrier {
     }
 }
 
-pub type CommandSignature = ID3D12CommandSignature;
-pub type CommandList = ID3D12CommandList;
+#[derive(Clone, Debug)]
+pub struct CommandSignature {
+    #[allow(dead_code)] // TODO: remove this
+    pub(crate) inner: ID3D12CommandSignature,
+}
 
+#[derive(Clone, Debug)]
+pub struct CommandList {
+    pub(crate) inner: ID3D12CommandList,
+}
+
+#[derive(Clone, Debug)]
 pub struct GraphicsCommandList {
-    inner: ID3D12GraphicsCommandList,
+    pub(crate) inner: ID3D12GraphicsCommandList,
 }
 
 impl GraphicsCommandList {
     pub fn as_list(&self) -> CommandList {
-        self.inner.cast::<CommandList>().unwrap()
+        CommandList {
+            inner: self.inner.cast().unwrap(),
+        }
     }
 
     pub fn close(&self) -> HRESULT {
@@ -190,7 +201,7 @@ impl GraphicsCommandList {
             Ok(()) => HRESULT(0), // the value of `S_OK`
             Err(code) => code,
         };
-        unsafe { err_to_hres(self.inner.Reset(&allocator.inner, &initial_pso)) }
+        unsafe { err_to_hres(self.inner.Reset(&allocator.inner, &initial_pso.inner)) }
     }
 
     pub fn discard_resource(&self, resource: Resource, region: DiscardRegion) {
@@ -288,7 +299,7 @@ impl GraphicsCommandList {
 
     pub fn set_pipeline_state(&self, pso:&PipelineState) {
         unsafe {
-            self.inner.SetPipelineState(&pso);
+            self.inner.SetPipelineState(&pso.inner);
         }
     }
 
@@ -299,8 +310,13 @@ impl GraphicsCommandList {
     }
 
     pub fn set_descriptor_heaps(&self, heaps: &[DescriptorHeap]) {
+        let heaps = heaps
+            .iter()
+            .cloned()
+            .map(|outer| Some(outer.inner))
+            .collect::<Box<[_]>>();
         unsafe {
-            self.inner.SetDescriptorHeaps(heaps);
+            self.inner.SetDescriptorHeaps(&*heaps);
         }
     }
 

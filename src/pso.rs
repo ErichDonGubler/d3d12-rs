@@ -142,7 +142,9 @@ impl<'a> Deref for CachedPSO<'a> {
     }
 }
 
-pub type PipelineState = ID3D12PipelineState;
+pub struct PipelineState {
+    pub(crate) inner: ID3D12PipelineState,
+}
 
 #[repr(u32)]
 pub enum Subobject {
