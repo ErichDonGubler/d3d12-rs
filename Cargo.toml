@@ -17,6 +17,7 @@ implicit-link = []
 
 [dependencies]
 bitflags = "2"
+derive_more = "0.99.17"
 # libloading 0.8 switches from `winapi` to `windows-sys`; permit either
 libloading = { version = ">=0.7,<0.9", optional = true }
 windows = { version = "0.48.0", features = [

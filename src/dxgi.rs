@@ -1,26 +1,34 @@
 use windows::{
-    core::IUnknown,
+    core::{ComInterface, IUnknown},
     Win32::{
         Foundation::{HANDLE, HWND, S_OK, TRUE},
-        Graphics::Dxgi::{
-            Common::{
-                DXGI_ALPHA_MODE, DXGI_ALPHA_MODE_FORCE_DWORD, DXGI_ALPHA_MODE_IGNORE,
-                DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_ALPHA_MODE_STRAIGHT,
-                DXGI_ALPHA_MODE_UNSPECIFIED, DXGI_FORMAT, DXGI_MODE_DESC,
-                DXGI_MODE_SCALING_UNSPECIFIED, DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED, DXGI_RATIONAL,
-                DXGI_SAMPLE_DESC,
+        Graphics::{
+            Direct3D12::{
+                ID3D12DebugDevice, D3D12_RLDO_DETAIL, D3D12_RLDO_FLAGS, D3D12_RLDO_IGNORE_INTERNAL,
+                D3D12_RLDO_NONE, D3D12_RLDO_SUMMARY,
             },
-            IDXGIAdapter1, IDXGIAdapter2, IDXGIAdapter3, IDXGIAdapter4, IDXGIFactory1,
-            IDXGIFactory2, IDXGIFactory3, IDXGIFactory4, IDXGIFactory5, IDXGIFactory6,
-            IDXGIFactoryMedia, IDXGIInfoQueue, IDXGISwapChain, IDXGISwapChain1, IDXGISwapChain2,
-            IDXGISwapChain3, DXGI_CREATE_FACTORY_DEBUG, DXGI_PRESENT_ALLOW_TEARING,
-            DXGI_PRESENT_DO_NOT_SEQUENCE, DXGI_PRESENT_DO_NOT_WAIT, DXGI_PRESENT_RESTART,
-            DXGI_PRESENT_RESTRICT_TO_OUTPUT, DXGI_PRESENT_STEREO_PREFER_RIGHT,
-            DXGI_PRESENT_STEREO_TEMPORARY_MONO, DXGI_PRESENT_TEST, DXGI_PRESENT_USE_DURATION,
-            DXGI_SCALING, DXGI_SCALING_ASPECT_RATIO_STRETCH, DXGI_SCALING_NONE,
-            DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT,
-            DXGI_SWAP_EFFECT_DISCARD, DXGI_SWAP_EFFECT_FLIP_DISCARD,
-            DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_SWAP_EFFECT_SEQUENTIAL, DXGI_USAGE,
+            Dxgi::{
+                Common::{
+                    DXGI_ALPHA_MODE, DXGI_ALPHA_MODE_FORCE_DWORD, DXGI_ALPHA_MODE_IGNORE,
+                    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_ALPHA_MODE_STRAIGHT,
+                    DXGI_ALPHA_MODE_UNSPECIFIED, DXGI_FORMAT, DXGI_MODE_DESC,
+                    DXGI_MODE_SCALING_UNSPECIFIED, DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
+                    DXGI_RATIONAL, DXGI_SAMPLE_DESC,
+                },
+                IDXGIAdapter1, IDXGIAdapter2, IDXGIAdapter3, IDXGIAdapter4, IDXGIDebug,
+                IDXGIFactory1, IDXGIFactory2, IDXGIFactory3, IDXGIFactory4, IDXGIFactory5,
+                IDXGIFactory6, IDXGIFactoryMedia, IDXGIInfoQueue, IDXGISwapChain, IDXGISwapChain1,
+                IDXGISwapChain2, IDXGISwapChain3, DXGI_CREATE_FACTORY_DEBUG, DXGI_DEBUG_RLO_ALL,
+                DXGI_DEBUG_RLO_DETAIL, DXGI_DEBUG_RLO_FLAGS, DXGI_DEBUG_RLO_SUMMARY,
+                DXGI_PRESENT_ALLOW_TEARING, DXGI_PRESENT_DO_NOT_SEQUENCE, DXGI_PRESENT_DO_NOT_WAIT,
+                DXGI_PRESENT_RESTART, DXGI_PRESENT_RESTRICT_TO_OUTPUT,
+                DXGI_PRESENT_STEREO_PREFER_RIGHT, DXGI_PRESENT_STEREO_TEMPORARY_MONO,
+                DXGI_PRESENT_TEST, DXGI_PRESENT_USE_DURATION, DXGI_SCALING,
+                DXGI_SCALING_ASPECT_RATIO_STRETCH, DXGI_SCALING_NONE, DXGI_SCALING_STRETCH,
+                DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT,
+                DXGI_SWAP_EFFECT_DISCARD, DXGI_SWAP_EFFECT_FLIP_DISCARD,
+                DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_SWAP_EFFECT_SEQUENTIAL, DXGI_USAGE,
+            },
         },
     },
 };
@@ -115,6 +123,7 @@ pub struct Adapter4 {
     #[allow(dead_code)] // TODO: remove this
     inner: IDXGIAdapter4,
 }
+
 // crate::weak_com_inheritance_chain! {
 //     #[derive(Debug, Copy, Clone, PartialEq, Hash)]
 //     pub enum DxgiAdapter {
@@ -124,6 +133,55 @@ pub struct Adapter4 {
 //         Adapter4(IDXGIAdapter4), from_adapter4, as_adapter4, unwrap_adapter4;
 //     }
 // }
+pub enum DxgiAdapter {
+    Adapter1(IDXGIAdapter1),
+    Adapter2(IDXGIAdapter2),
+    Adapter3(IDXGIAdapter3),
+    Adapter4(IDXGIAdapter4),
+}
+
+impl DxgiAdapter {
+    pub fn as_debug_device(&self) -> D3DResult<DebugDevice> {
+        match self {
+            Self::Adapter1(a) => DebugDevice::new(a.clone()),
+            Self::Adapter2(a) => DebugDevice::new(a.clone()),
+            Self::Adapter3(a) => DebugDevice::new(a.clone()),
+            Self::Adapter4(a) => DebugDevice::new(a.clone()),
+        }
+    }
+}
+
+pub struct DebugDevice {
+    inner: ID3D12DebugDevice,
+}
+
+impl DebugDevice {
+    fn new<T>(obj: T) -> D3DResult<Self>
+    where
+        T: ComInterface,
+    {
+        Ok(Self { inner: obj.cast()? })
+    }
+
+    pub fn report_live_device_objects(&self, flags: RldoFlags) -> D3DResult<()> {
+        // TODO: Not sure what GUID to use here. Maybe it's the device's GUID we should use?
+        unsafe { self.inner.ReportLiveDeviceObjects(flags.into()) }
+    }
+}
+
+/// Flags for [`DebugDevice::report_live_device_objects`].
+// TODO: Should other APIs be done this way?
+#[derive(
+    derive_more::BitOr, Clone, Copy, Debug, derive_more::From, Eq, derive_more::Into, PartialEq,
+)]
+pub struct RldoFlags(D3D12_RLDO_FLAGS);
+
+impl RldoFlags {
+    pub const NONE: Self = Self(D3D12_RLDO_NONE);
+    pub const DETAIL: Self = Self(D3D12_RLDO_DETAIL);
+    pub const SUMMARY: Self = Self(D3D12_RLDO_SUMMARY);
+    pub const IGNORE_INTERNAL: Self = Self(D3D12_RLDO_IGNORE_INTERNAL);
+}
 
 pub struct Factory1 {
     #[allow(dead_code)] // TODO: remove this
@@ -182,6 +240,7 @@ pub struct SwapChain3 {
     #[allow(dead_code)] // TODO: remove this
     inner: IDXGISwapChain3,
 }
+
 // crate::weak_com_inheritance_chain! {
 //     #[derive(Debug, Copy, Clone, PartialEq, Hash)]
 //     pub enum DxgiSwapchain {
@@ -191,6 +250,12 @@ pub struct SwapChain3 {
 //         SwapChain3(IDXGISwapChain3), from_swap_chain3, as_swap_chain3, unwrap_swap_chain3;
 //     }
 // }
+pub enum DxgiSwapchain {
+    SwapChain(IDXGISwapChain),
+    SwapChain1(IDXGISwapChain1),
+    SwapChain2(IDXGISwapChain2),
+    SwapChain3(IDXGISwapChain3),
+}
 
 #[cfg(feature = "libloading")]
 #[derive(Debug)]
